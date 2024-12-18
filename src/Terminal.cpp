@@ -169,6 +169,10 @@ static std::unordered_map<int, char> __valid_symbols = {
     {39, '\''}, {44, ','}, {45, '-'},  {46, '.'}, {47, '/'}, {59, ';'},
     {61, '='},  {91, '['}, {92, '\\'}, {93, ']'}, {96, '`'}};
 
+static std::unordered_map<char, char> __valid_symbols_shift = {
+    {'\'', '"'}, {',', '<'}, {'-', '_'},  {'.', '>'}, {'/', '?'}, {';', ':'},
+    {'=', '+'},  {'[', '{'}, {'\\', '|'}, {']', '}'}, {'`', '~'}};
+
 bool __is_symbol(int key) {
   for (std::pair<int, char> p : __valid_symbols) {
     if (p.first == key)
@@ -176,12 +180,30 @@ bool __is_symbol(int key) {
   }
   return false;
 }
+
 char __get_adapted_symbol(int key, int mods) {
   if (!__is_symbol(key))
     throw "Key should be a symbol.";
   if (mods & GLFW_MOD_SHIFT) {
-
+    return __valid_symbols_shift[__valid_symbols[key]];
   } else {
+    return __valid_symbols[key];
+  }
+}
+
+static std::unordered_map<char, char> __valid_number_shift = {
+    {'0', ')'}, {'1', '!'}, {'2', '@'}, {'3', '#'}, {'4', '$'},
+    {'5', '%'}, {'6', '^'}, {'7', '&'}, {'8', '*'}, {'9', '('}};
+
+bool __is_number(int key) { return key <= (int)'9' && key >= (int)'0'; }
+
+char __get_adapted_number(int key, int mods) {
+  if (!__is_number(key))
+    throw "Key should be a number.";
+  if (mods & GLFW_MOD_SHIFT) {
+    return __valid_number_shift[(char)key];
+  } else {
+    return (char)key;
   }
 }
 
@@ -228,6 +250,9 @@ void __handle_key_down(int key, int mods) {
   }
   if (__is_symbol(key)) {
     inputBuffer += __get_adapted_symbol(key, mods);
+  }
+  if (__is_number(key)) {
+    inputBuffer += __get_adapted_number(key, mods);
   }
   if (key == GLFW_KEY_BACKSPACE && inputBuffer.length())
     inputBuffer.pop_back();
