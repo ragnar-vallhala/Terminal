@@ -3,7 +3,6 @@
 
 int main(){
   std::cout<<"Hello World"<<std::endl;
-  Terminal::get_instance()->init();
   Terminal::get_instance()->render();
 
 return 0;

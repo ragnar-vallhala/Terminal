@@ -1,24 +1,46 @@
 #include "Terminal.h"
+#include "PTYHandler.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <cstdint>
+#include <ctime>
 #define GL_SILENCE_DEPRECATION
+#include "Logger.h"
 #include <GLFW/glfw3.h> // Will drag system OpenGL headers
+#include <Helper.h>
+#include <filesystem>
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
+#include <vector>
+
+// Config definition to be ported in separate config manager
+#define FONT_STEP 0.01
+#define FONT_NAME "Nerd"
+// Global helpers
+std::vector<std::string> __find_system_fonts(const std::string &font_name);
 
 static std::string inputBuffer;
 static std::string outputBuffer;
 static bool __scroll_down = true;
 
 static void glfw_error_callback(int error, const char *description);
-static void key_callback(GLFWwindow *window, int key, int scancode, int action,
-                         int mods);
+static void glfw_key_callback(GLFWwindow *window, int key, int scancode,
+                              int action, int mods);
+static void pty_handler_callback(const char *output, uint64_t size);
 
 Terminal *Terminal::instance = nullptr;
 
-Terminal::Terminal() {}
+Terminal::Terminal() {
+  pty = PTYHandler::get_instance();
+  if (pty == nullptr)
+    exit(1);
+  // callback registration for output from the pty
+  pty->set_output_callback(pty_handler_callback);
+  if (!init())
+    exit(1);
+}
 Terminal::~Terminal() {
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
@@ -41,9 +63,11 @@ void Terminal::set_window_dim(uint32_t width, uint32_t height) {
   if (height > 0)
     windowHeight = height;
 }
+PTYHandler *Terminal::get_pty() { return pty; }
 uint32_t Terminal::get_height() { return windowHeight; }
 uint32_t Terminal::get_width() { return windowWidth; }
 GLFWwindow *Terminal::get_window() { return window; }
+float Terminal::get_scroll_pos() { return scrollPos; }
 bool Terminal::init() {
 
   if (!glfwInit())
@@ -63,7 +87,7 @@ bool Terminal::init() {
 
   // Setting Callbacks
   glfwSetErrorCallback(glfw_error_callback);
-  glfwSetKeyCallback(window, key_callback);
+  glfwSetKeyCallback(window, glfw_key_callback);
   glfwSetInputMode(window, GLFW_LOCK_KEY_MODS,
                    GLFW_TRUE); // Enable caps on detection
   IMGUI_CHECKVERSION();
@@ -80,6 +104,16 @@ bool Terminal::init() {
   style.FrameRounding = 5.0f;         // Round frame corners
   style.ItemSpacing = ImVec2(10, 10); // Spacing between items
 
+  // Font customisation
+  std::vector<std::string> fontFile = __find_system_fonts(FONT_NAME);
+  if (!fontFile.empty()) {
+    ImGuiIO &io = ImGui::GetIO();
+    io.Fonts->AddFontFromFileTTF(fontFile[0].c_str(), 128.0f);
+    set_font_size(0.15f);
+    pretty_log("FONT", "Font loaded correctly.");
+  } else {
+    pretty_log("FONT", "Specified font not found.", ERR);
+  }
   // Customize colors
   style.Colors[ImGuiCol_WindowBg] =
       ImVec4(0.1f, 0.1f, 0.15f, 1.00f); // Dark background
@@ -94,6 +128,7 @@ bool Terminal::init() {
       ImVec4(0.2f, 0.4f, 0.6f, 1.00f); // Button active color
 
   /*---------- Hard Code Style Region End-----------------*/
+
   // Setup Platform/Renderer backends
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
@@ -104,6 +139,12 @@ bool Terminal::init() {
 void Terminal::stop() { running = false; }
 
 bool Terminal::is_running() { return running; }
+void Terminal::set_font_size(float size) {
+  ImGui::GetIO().FontGlobalScale = size;
+  fontSize = size;
+}
+
+float Terminal::get_font_size() { return fontSize; }
 
 void Terminal::render() {
 
@@ -124,12 +165,17 @@ void Terminal::render() {
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-    ImGui::Text("%s", inputBuffer.c_str());
+    if (time(0) % 2 == 0)
+      ImGui::Text("%s", (outputBuffer + inputBuffer + cursor).c_str());
+    else
+      ImGui::Text("%s", (outputBuffer + inputBuffer + ' ').c_str());
+
     ImGui::PopTextWrapPos();
     if (__scroll_down) {
       ImGui::SetScrollHereY(1.0f);
       __scroll_down = false;
     }
+    scrollPos = ImGui::GetScrollY();
     ImGui::End();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -150,8 +196,8 @@ void __handle_key_up(int key, int mods);
 void __handle_key_down(int key, int mods);
 void __handle_key_held_down(int key, int mods);
 
-void key_callback(GLFWwindow *window, int key, int scancode, int action,
-                  int mods) {
+void glfw_key_callback(GLFWwindow *window, int key, int scancode, int action,
+                       int mods) {
   if (action == GLFW_PRESS) {
     __handle_key_down(key, mods);
   } else if (action == GLFW_RELEASE) {
@@ -160,11 +206,20 @@ void key_callback(GLFWwindow *window, int key, int scancode, int action,
     __handle_key_held_down(key, mods);
   }
 }
-
-bool __is_alpha(int key) {
-  return (key >= (int)'A' && key <= (int)'Z') || (key >= 'a' && key <= 'z');
+// Action Key section started
+void handle_enter_key(int key, int mods) {
+  if (GLFW_MOD_SHIFT & mods) {
+    inputBuffer += '\n';
+  } else {
+    PTYHandler *pty = Terminal::get_instance()->get_pty();
+    if (pty)
+      pty->send(inputBuffer + '\n');
+    inputBuffer.erase();
+  }
 }
+// Action Key section ended
 
+// Symbol section started
 static std::unordered_map<int, char> __valid_symbols = {
     {39, '\''}, {44, ','}, {45, '-'},  {46, '.'}, {47, '/'}, {59, ';'},
     {61, '='},  {91, '['}, {92, '\\'}, {93, ']'}, {96, '`'}};
@@ -190,7 +245,9 @@ char __get_adapted_symbol(int key, int mods) {
     return __valid_symbols[key];
   }
 }
+// Symbol section ended
 
+// Number section started
 static std::unordered_map<char, char> __valid_number_shift = {
     {'0', ')'}, {'1', '!'}, {'2', '@'}, {'3', '#'}, {'4', '$'},
     {'5', '%'}, {'6', '^'}, {'7', '&'}, {'8', '*'}, {'9', '('}};
@@ -205,6 +262,12 @@ char __get_adapted_number(int key, int mods) {
   } else {
     return (char)key;
   }
+}
+// Number section ended
+
+// Alphabet section start
+bool __is_alpha(int key) {
+  return (key >= (int)'A' && key <= (int)'Z') || (key >= 'a' && key <= 'z');
 }
 
 char __alpha_lower(char c) {
@@ -241,13 +304,35 @@ char __get_adapted_alpha(int key, int mods) {
       return __alpha_lower(key);
   }
 }
+// Alphabet section ended
 
+// Detect internal commands of the emulator
+
+bool __is_internal_command(int key, int mods) {
+  if (key == GLFW_KEY_EQUAL && mods & GLFW_MOD_SHIFT && mods & GLFW_MOD_SHIFT) {
+    Terminal *term = Terminal::get_instance();
+    term->set_font_size(term->get_font_size() + FONT_STEP);
+    return true;
+  } else if (key == GLFW_KEY_MINUS && mods & GLFW_MOD_SHIFT &&
+             mods & GLFW_MOD_SHIFT) {
+    Terminal *term = Terminal::get_instance();
+    term->set_font_size(term->get_font_size() - FONT_STEP);
+    return true;
+  }
+  return false;
+}
+
+// Generic key functions start
 void __handle_key_down(int key, int mods) {
-  // Internal function for the key_callback
+  // Internal function for the glfw_key_callback
+  __scroll_down = true;
   if (__is_alpha(key)) {
     // TODO: Just adding to the buffer. Fix later
     inputBuffer += __get_adapted_alpha(key, mods);
   }
+
+  if (__is_internal_command(key, mods))
+    return;
   if (__is_symbol(key)) {
     inputBuffer += __get_adapted_symbol(key, mods);
   }
@@ -259,13 +344,69 @@ void __handle_key_down(int key, int mods) {
   if (key == GLFW_KEY_SPACE)
     inputBuffer += ' ';
   if (key == GLFW_KEY_ENTER)
-    inputBuffer += '\n';
+    handle_enter_key(key, mods);
 }
 
 void __handle_key_up(int key, int mods) {
-  // Internal function for the key_callback
+  // Internal function for the glfw_key_callback
 }
 void __handle_key_held_down(int key, int mods) { __handle_key_down(key, mods); }
+// Generic key functions end
+
 /*
  * Keyboard handling section end
  */
+
+/*
+ *  PTY Handler section start
+ * */
+void pty_handler_callback(const char *output, uint64_t size) {
+  pretty_log("TERM", std::string("PTY Callback recieved\n"));
+  // Hard coded block
+  if (!__scroll_down) {
+    __scroll_down = true;
+  }
+  outputBuffer += std::string(output);
+}
+/*
+ *  PTY Handler section end
+ * */
+
+// Global Font functions
+std::vector<std::string> __find_system_fonts(const std::string &font_name) {
+  std::vector<std::string> font_paths;
+
+  // List of common directories for fonts
+  std::vector<std::string> font_dirs = {
+      "/usr/share/fonts", "/usr/local/share/fonts",
+      std::string(getenv("HOME")) + "/.fonts"};
+
+  // File extensions for font files
+  std::vector<std::string> font_extensions = {".ttf", ".otf"};
+
+  // Scan each font directory
+  for (const auto &dir : font_dirs) {
+    if (!std::filesystem::exists(dir) || !std::filesystem::is_directory(dir)) {
+      continue; // Skip if directory doesn't exist
+    }
+
+    // Recursively search for matching font files
+    for (const auto &entry :
+         std::filesystem::recursive_directory_iterator(dir)) {
+      if (entry.is_regular_file()) {
+        std::string path = entry.path().string();
+        std::string filename = entry.path().filename().string();
+
+        // Check if the file matches the desired font name and extension
+        for (const auto &ext : font_extensions) {
+          if (filename.find(font_name) != std::string::npos &&
+              filename.ends_with(ext)) {
+            font_paths.push_back(path);
+          }
+        }
+      }
+    }
+  }
+
+  return font_paths;
+}

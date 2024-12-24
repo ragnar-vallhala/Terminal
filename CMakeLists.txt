@@ -4,7 +4,7 @@ set(PROJECT Terminal)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(${PROJECT} C CXX)
-
+set(CMAKE_BUILD_TYPE Debug)
 add_subdirectory(${CMAKE_SOURCE_DIR}/dependencies/glfw)
 
 file(GLOB_RECURSE SOURCES
