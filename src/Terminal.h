@@ -32,7 +32,6 @@ private:
   PTYHandler *pty = nullptr;
   float fontSize = 1.0f;
   float scrollPos = 0.0f;
-  std::string cursor = "|";
 };
 
 #endif // !TERMINAL_H

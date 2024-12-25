@@ -17,3 +17,17 @@ PTY_Payload::PTY_Payload(std::string payload, int payload_type)
 // PTY_Payload_list struct
 PTY_Payload_List::PTY_Payload_List(PTY_Payload *node)
     : curr(node), next(nullptr) {}
+
+// erases the PTY_Payload_List
+PTY_Payload_List *erase_PTY_Payload_List(PTY_Payload_List *node) {
+  PTY_Payload_List *temp = node;
+  while (temp->next) {
+    PTY_Payload_List *prev = temp;
+    temp = temp->next;
+    delete prev->curr;
+    prev->curr = nullptr;
+    delete prev;
+    prev = nullptr;
+  }
+  return temp;
+}

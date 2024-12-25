@@ -1,14 +1,16 @@
 #include "Terminal.h"
+#include "EscapeHandler.h"
+#include "Helper.h"
 #include "PTYHandler.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <cstdint>
 #include <ctime>
+#include <iostream>
 #define GL_SILENCE_DEPRECATION
 #include "Logger.h"
 #include <GLFW/glfw3.h> // Will drag system OpenGL headers
-#include <Helper.h>
 #include <filesystem>
 #include <stdio.h>
 #include <string>
@@ -22,14 +24,18 @@
 std::vector<std::string> __find_system_fonts(const std::string &font_name);
 
 static std::string inputBuffer;
-static std::string outputBuffer;
+/* static std::string outputBuffer; */
+static PTY_Payload_List *ptyPayload = nullptr;
+static PTY_Payload_List *ptyPayloadTail = nullptr;
 static bool __scroll_down = true;
 
 static void glfw_error_callback(int error, const char *description);
 static void glfw_key_callback(GLFWwindow *window, int key, int scancode,
                               int action, int mods);
-static void pty_handler_callback(const char *output, uint64_t size);
+static void pty_handler_callback(PTY_Payload_List *payloadList);
+static void escape_sequence_handler_callback(int signal);
 
+static void __render_text_to_terminal(PTY_Payload_List *payload);
 Terminal *Terminal::instance = nullptr;
 
 Terminal::Terminal() {
@@ -165,10 +171,7 @@ void Terminal::render() {
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-    if (time(0) % 2 == 0)
-      ImGui::Text("%s", (outputBuffer + inputBuffer + cursor).c_str());
-    else
-      ImGui::Text("%s", (outputBuffer + inputBuffer + ' ').c_str());
+    __render_text_to_terminal(ptyPayload);
 
     ImGui::PopTextWrapPos();
     if (__scroll_down) {
@@ -360,13 +363,20 @@ void __handle_key_held_down(int key, int mods) { __handle_key_down(key, mods); }
 /*
  *  PTY Handler section start
  * */
-void pty_handler_callback(const char *output, uint64_t size) {
-  pretty_log("TERM", std::string("PTY Callback recieved\n"));
-  // Hard coded block
+void pty_handler_callback(PTY_Payload_List *payloadList) {
+  pretty_log("TERM", std::string("PTY Callback recieved"));
   if (!__scroll_down) {
     __scroll_down = true;
   }
-  outputBuffer += std::string(output);
+  if (ptyPayload == nullptr) {
+    ptyPayload = payloadList;
+  } else {
+    ptyPayloadTail->next = payloadList;
+  }
+  while (payloadList->next) {
+    payloadList = payloadList->next;
+  }
+  ptyPayloadTail = payloadList;
 }
 /*
  *  PTY Handler section end
@@ -409,4 +419,36 @@ std::vector<std::string> __find_system_fonts(const std::string &font_name) {
   }
 
   return font_paths;
+}
+
+// Text presentation to screen
+void __render_text_to_terminal(PTY_Payload_List *payload) {
+  PTY_Payload_List *curr = payload;
+  while (curr != nullptr && curr->next != nullptr) {
+    if (curr->curr->type == PAYLOAD_INS) {
+      if (handle_escape_sequence(curr->curr->data,
+                                 escape_sequence_handler_callback)) {
+        curr = ptyPayload;
+        break;
+      }
+    }
+
+    else {
+      ImGui::Text("%s", curr->curr->data.c_str());
+    }
+    curr = curr->next;
+  }
+  if (curr != nullptr) {
+    std::string tempString = curr->curr->data + inputBuffer;
+    ImGui::Text("%s", tempString.c_str());
+  } else
+    ImGui::Text("%s", inputBuffer.c_str());
+}
+
+// EscapeSequenceHandler section
+void escape_sequence_handler_callback(int signal) {
+  if (signal == SCR_CLEAR_SIGNAL) {
+    ptyPayload = erase_PTY_Payload_List(ptyPayload);
+    ptyPayloadTail = ptyPayload;
+  }
 }

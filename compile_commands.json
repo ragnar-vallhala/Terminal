@@ -49,6 +49,12 @@
 },
 {
   "directory": "/home/ragnar/Documents/Terminal/build",
+  "command": "/usr/bin/c++  -I/home/ragnar/Documents/Terminal/src -I/home/ragnar/Documents/Terminal/dependencies -I/home/ragnar/Documents/Terminal/dependencies/imgui -I/home/ragnar/Documents/Terminal/dependencies/glfw/include -g -std=gnu++20 -o CMakeFiles/Terminal.dir/src/EscapeHandler.cpp.o -c /home/ragnar/Documents/Terminal/src/EscapeHandler.cpp",
+  "file": "/home/ragnar/Documents/Terminal/src/EscapeHandler.cpp",
+  "output": "CMakeFiles/Terminal.dir/src/EscapeHandler.cpp.o"
+},
+{
+  "directory": "/home/ragnar/Documents/Terminal/build",
   "command": "/usr/bin/c++  -I/home/ragnar/Documents/Terminal/src -I/home/ragnar/Documents/Terminal/dependencies -I/home/ragnar/Documents/Terminal/dependencies/imgui -I/home/ragnar/Documents/Terminal/dependencies/glfw/include -g -std=gnu++20 -o CMakeFiles/Terminal.dir/src/Helper.cpp.o -c /home/ragnar/Documents/Terminal/src/Helper.cpp",
   "file": "/home/ragnar/Documents/Terminal/src/Helper.cpp",
   "output": "CMakeFiles/Terminal.dir/src/Helper.cpp.o"
@@ -64,12 +70,6 @@
   "command": "/usr/bin/c++  -I/home/ragnar/Documents/Terminal/src -I/home/ragnar/Documents/Terminal/dependencies -I/home/ragnar/Documents/Terminal/dependencies/imgui -I/home/ragnar/Documents/Terminal/dependencies/glfw/include -g -std=gnu++20 -o CMakeFiles/Terminal.dir/src/PTYHandler.cpp.o -c /home/ragnar/Documents/Terminal/src/PTYHandler.cpp",
   "file": "/home/ragnar/Documents/Terminal/src/PTYHandler.cpp",
   "output": "CMakeFiles/Terminal.dir/src/PTYHandler.cpp.o"
-},
-{
-  "directory": "/home/ragnar/Documents/Terminal/build",
-  "command": "/usr/bin/c++  -I/home/ragnar/Documents/Terminal/src -I/home/ragnar/Documents/Terminal/dependencies -I/home/ragnar/Documents/Terminal/dependencies/imgui -I/home/ragnar/Documents/Terminal/dependencies/glfw/include -g -std=gnu++20 -o CMakeFiles/Terminal.dir/src/Parser.cpp.o -c /home/ragnar/Documents/Terminal/src/Parser.cpp",
-  "file": "/home/ragnar/Documents/Terminal/src/Parser.cpp",
-  "output": "CMakeFiles/Terminal.dir/src/Parser.cpp.o"
 },
 {
   "directory": "/home/ragnar/Documents/Terminal/build",

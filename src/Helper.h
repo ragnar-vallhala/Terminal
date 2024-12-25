@@ -18,7 +18,9 @@ typedef struct PTY_Payload {
 
 typedef struct PTY_Payload_List {
   PTY_Payload *curr;
-  PTY_Payload *next;
+  PTY_Payload_List *next;
   PTY_Payload_List(PTY_Payload *node);
 } PTY_Payload_List;
+
+PTY_Payload_List *erase_PTY_Payload_List(PTY_Payload_List *node);
 #endif

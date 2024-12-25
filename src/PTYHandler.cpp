@@ -8,11 +8,8 @@
 #include <string>
 #include <thread>
 #include <unistd.h>
-#include <utility>
-#include <vector>
 
-std::pair<std::vector<std::string>, std::string>
-__filter_escape_sequence(const char *arr);
+PTY_Payload_List *__filter_escape_sequence(const char *arr);
 
 PTYHandler *PTYHandler::instance = nullptr;
 static bool input_signal = true;
@@ -39,8 +36,8 @@ PTYHandler::PTYHandler() {
   pretty_log("PTY", std::string("Created PTY name ") + slave_name);
   init();
 }
-void PTYHandler::set_output_callback(void (*callback)(const char *output,
-                                                      uint64_t size)) {
+void PTYHandler::set_output_callback(
+    void (*callback)(PTY_Payload_List *payloadList)) {
   output_callback = callback;
 }
 void PTYHandler::init() {
@@ -132,11 +129,8 @@ void PTYHandler::__reader_thread() {
     if (output_callback != nullptr && bytes_read > 0) {
       buffer[bytes_read] = '\0';
       auto res = __filter_escape_sequence(buffer);
-      output_callback(res.second.c_str(), res.second.size());
+      output_callback(res);
       pretty_log("PTY", "Reader tranfered data to callback.");
-      pretty_log("PTY", std::string("Reader got ") +
-                            std::to_string(res.first.size()) +
-                            std::string(" escape sequences."));
     }
     bytes_read = read(master_fd, buffer, sizeof(buffer) - 1);
   }
@@ -146,30 +140,67 @@ std::string escape_regex_special_chars(const std::string &str) {
                             "\\$1");
 }
 
-std::pair<std::vector<std::string>, std::string>
-__filter_escape_sequence(const char *arr) {
+PTY_Payload_List *__filter_escape_sequence(const char *arr) {
   std::string input(arr);
-  std::vector<std::string> controlSequences;
-  std::regex ansi_escape("\x1b\\[[\\?\\d;]*[a-zA-Z]");
+  std::regex ansi_escape("\\x1b\\[[\\?\\d;]*[a-zA-Z]");
 
   // Iterator for matching all occurrences
   auto begin = std::sregex_iterator(input.begin(), input.end(), ansi_escape);
   auto end = std::sregex_iterator();
 
-  // To build the filtered string
-  std::string filteredString = input;
+  PTY_Payload_List *head = nullptr;
+  PTY_Payload_List *tail = nullptr;
 
-  // Iterate through all matches and store them in the vector
+  size_t last_pos = 0;
+
+  // Iterate through all matches
   for (auto it = begin; it != end; ++it) {
-    controlSequences.push_back(it->str()); // Add each match to the vector
-    // Remove the matched escape sequence from the filtered string
-    filteredString = std::regex_replace(
-        filteredString, std::regex(escape_regex_special_chars(it->str())), "");
+    std::smatch match = *it;
+    size_t start_pos = match.position();
+
+    // Add non-control string before the match
+    if (start_pos > last_pos) {
+      std::string text = input.substr(last_pos, start_pos - last_pos);
+      if (!text.empty()) {
+        PTY_Payload *payload = new PTY_Payload(text, PAYLOAD_STR);
+        PTY_Payload_List *node = new PTY_Payload_List(payload);
+        if (!head) {
+          head = tail = node;
+        } else {
+          tail->next = node;
+          tail = node;
+        }
+      }
+    }
+
+    // Add the control sequence
+    std::string control = match.str();
+    PTY_Payload *payload = new PTY_Payload(control, PAYLOAD_INS);
+    PTY_Payload_List *node = new PTY_Payload_List(payload);
+    if (!head) {
+      head = tail = node;
+    } else {
+      tail->next = node;
+      tail = node;
+    }
+
+    last_pos = start_pos + match.length();
   }
-  /* if (controlSequences.size() == 0) { */
-  /*   pretty_log("PAR", get_bytes(input.c_str(), input.size())); */
-  /* } */
 
-  return std::make_pair(controlSequences, filteredString);
+  // Add any remaining text after the last match
+  if (last_pos < input.length()) {
+    std::string text = input.substr(last_pos);
+    if (!text.empty()) {
+      PTY_Payload *payload = new PTY_Payload(text, PAYLOAD_STR);
+      PTY_Payload_List *node = new PTY_Payload_List(payload);
+      if (!head) {
+        head = tail = node;
+      } else {
+        tail->next = node;
+        tail = node;
+      }
+    }
+  }
+
+  return head;
 }
-

@@ -1,5 +1,6 @@
 #ifndef PTYHANDLER_H
 #define PTYHANDLER_H
+#include "Helper.h"
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -10,7 +11,7 @@ public:
   ~PTYHandler();
   void init();
   void send(std::string input);
-  void set_output_callback(void (*callback)(const char *output, uint64_t size));
+  void set_output_callback(void (*callback)(PTY_Payload_List *payloadList));
   void exit();
 
 private:
@@ -22,7 +23,7 @@ private:
   int slave_fd;
   char slave_name[256];
   std::string inputBuffer;
-  void (*output_callback)(const char *output, uint64_t size) = nullptr;
+  void (*output_callback)(PTY_Payload_List *payloadList) = nullptr;
   bool running = true;
   void __reader_thread();
   void __writer_thread();
