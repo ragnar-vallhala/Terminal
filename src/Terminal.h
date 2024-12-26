@@ -21,6 +21,14 @@ public:
   float get_font_size();
   void set_font_size(float size);
   float get_scroll_pos();
+  int get_character_width();
+  int get_character_height();
+  int get_window_height_in_characters();
+  int get_window_width_in_characters();
+  int get_cursor_x();
+  int get_cursor_y();
+  void set_cursor_x(int x);
+  void set_cursor_y(int y);
 
 private:
   Terminal();
@@ -32,6 +40,12 @@ private:
   PTYHandler *pty = nullptr;
   float fontSize = 1.0f;
   float scrollPos = 0.0f;
+  int characterWidth = 0;
+  int characterHeight = 0;
+  int windowWidthInCharacters = 0;
+  int windowHeightInCharacters = 0;
+  int cursorX = 0;
+  int cursorY = 0;
 };
 
 #endif // !TERMINAL_H

@@ -5,6 +5,8 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
+#include <GL/gl.h>
+#include <chrono>
 #include <cstdint>
 #include <ctime>
 #include <iostream>
@@ -20,6 +22,7 @@
 // Config definition to be ported in separate config manager
 #define FONT_STEP 0.01
 #define FONT_NAME "Nerd"
+#define CURSOR "|"
 // Global helpers
 std::vector<std::string> __find_system_fonts(const std::string &font_name);
 
@@ -32,10 +35,12 @@ static bool __scroll_down = true;
 static void glfw_error_callback(int error, const char *description);
 static void glfw_key_callback(GLFWwindow *window, int key, int scancode,
                               int action, int mods);
+static void glfw_window_resize_callback(GLFWwindow *window, int width,
+                                        int height);
 static void pty_handler_callback(PTY_Payload_List *payloadList);
 static void escape_sequence_handler_callback(int signal);
 
-static void __render_text_to_terminal(PTY_Payload_List *payload);
+static void __render_text_to_screen(PTY_Payload_List *payload);
 Terminal *Terminal::instance = nullptr;
 
 Terminal::Terminal() {
@@ -74,6 +79,19 @@ uint32_t Terminal::get_height() { return windowHeight; }
 uint32_t Terminal::get_width() { return windowWidth; }
 GLFWwindow *Terminal::get_window() { return window; }
 float Terminal::get_scroll_pos() { return scrollPos; }
+int Terminal::get_character_width() { return characterWidth; }
+int Terminal::get_character_height() { return characterHeight; }
+int Terminal::get_window_width_in_characters() {
+  return windowWidthInCharacters;
+}
+void Terminal::set_cursor_x(int x) { cursorX = x; }
+void Terminal::set_cursor_y(int y) { cursorY = y; }
+int Terminal::get_cursor_x() { return cursorX; }
+int Terminal::get_cursor_y() { return cursorY; }
+
+int Terminal::get_window_height_in_characters() {
+  return windowHeightInCharacters;
+}
 bool Terminal::init() {
 
   if (!glfwInit())
@@ -94,6 +112,7 @@ bool Terminal::init() {
   // Setting Callbacks
   glfwSetErrorCallback(glfw_error_callback);
   glfwSetKeyCallback(window, glfw_key_callback);
+  glfwSetFramebufferSizeCallback(window, glfw_window_resize_callback);
   glfwSetInputMode(window, GLFW_LOCK_KEY_MODS,
                    GLFW_TRUE); // Enable caps on detection
   IMGUI_CHECKVERSION();
@@ -154,6 +173,7 @@ float Terminal::get_font_size() { return fontSize; }
 
 void Terminal::render() {
 
+  auto start = std::chrono::high_resolution_clock::now();
   // Main loop
   while (running && !glfwWindowShouldClose(window)) {
     glfwPollEvents();
@@ -170,16 +190,42 @@ void Terminal::render() {
     ImGui::Begin("##", nullptr,
                  ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    // ImGUI font dim setters
+    if (characterWidth == 0 || characterHeight == 0) {
+      characterWidth = ImGui::CalcTextSize("Q").x;
+      characterHeight = ImGui::CalcTextSize("Q").y;
+      pretty_log("FONT", "Font dimensions loaded");
+      pretty_log("FONT", std::string("Font dimension: ") +
+                             std::to_string(characterWidth) + 'X' +
+                             std::to_string(characterHeight));
+    }
+    ImVec2 padding = ImGui::GetStyle().WindowPadding;
+    windowWidthInCharacters =
+        (ImGui::GetWindowWidth() - 3 * padding.x) / characterWidth;
+    windowHeightInCharacters =
+        (ImGui::GetWindowHeight() - 3 * padding.y) / characterHeight;
+    // Spacing
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(0, 0));
     ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
-    __render_text_to_terminal(ptyPayload);
+    __render_text_to_screen(ptyPayload);
 
     ImGui::PopTextWrapPos();
+    ImGui::PopStyleVar(3);
     if (__scroll_down) {
       ImGui::SetScrollHereY(1.0f);
       __scroll_down = false;
     }
     scrollPos = ImGui::GetScrollY();
     ImGui::End();
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    ImGui::Begin("FPS");
+    ImGui::Text("%s", std::to_string(1000.0 / duration.count()).c_str());
+    ImGui::End();
+    start = std::chrono::high_resolution_clock::now();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -189,6 +235,11 @@ void Terminal::render() {
 
 void glfw_error_callback(int error, const char *description) {
   fprintf(stderr, "GLFW Error %d: %s\n", error, description);
+}
+
+void glfw_window_resize_callback(GLFWwindow *window, int width, int height) {
+  glViewport(0, 0, width, height);
+  Terminal::get_instance()->set_window_dim(width, height);
 }
 
 /*
@@ -210,7 +261,7 @@ void glfw_key_callback(GLFWwindow *window, int key, int scancode, int action,
   }
 }
 // Action Key section started
-void handle_enter_key(int key, int mods) {
+void __handle_enter_key(int key, int mods) {
   if (GLFW_MOD_SHIFT & mods) {
     inputBuffer += '\n';
   } else {
@@ -325,10 +376,25 @@ bool __is_internal_command(int key, int mods) {
   return false;
 }
 
+// Act for C0 signals
+bool __handle_C0_code(int key, int mods) {
+
+  if (key == GLFW_KEY_C && mods & GLFW_MOD_CONTROL) {
+    inputBuffer.erase();
+    inputBuffer += '\x03';
+    __handle_enter_key(key, mods);
+    return true;
+  }
+  return false;
+}
+
 // Generic key functions start
 void __handle_key_down(int key, int mods) {
   // Internal function for the glfw_key_callback
   __scroll_down = true;
+  if (__handle_C0_code(key, mods)) {
+    return;
+  }
   if (__is_alpha(key)) {
     // TODO: Just adding to the buffer. Fix later
     inputBuffer += __get_adapted_alpha(key, mods);
@@ -347,7 +413,7 @@ void __handle_key_down(int key, int mods) {
   if (key == GLFW_KEY_SPACE)
     inputBuffer += ' ';
   if (key == GLFW_KEY_ENTER)
-    handle_enter_key(key, mods);
+    __handle_enter_key(key, mods);
 }
 
 void __handle_key_up(int key, int mods) {
@@ -421,33 +487,52 @@ std::vector<std::string> __find_system_fonts(const std::string &font_name) {
   return font_paths;
 }
 
-// Text presentation to screen
-void __render_text_to_terminal(PTY_Payload_List *payload) {
+void __print_character_to_screen(std::string text) {
+  Terminal *terminal = Terminal::get_instance();
+  int windowWidth = terminal->get_window_width_in_characters();
+  int cursorX = terminal->get_cursor_x();
+
+  for (char ch : text) {
+    if (ch == '\n' || cursorX >= windowWidth) {
+      ImGui::NewLine(); // Move to a new line
+      cursorX = 0;      // Reset cursor position for the new line
+    }
+    if (ch != '\n') {
+      ImGui::SameLine(0, 0);
+      ImGui::TextUnformatted(&ch, &ch + 1);
+      cursorX++;
+    }
+    if (ch == '\t')
+      cursorX += 3;
+  }
+  terminal->set_cursor_x(cursorX);
+}
+// Payload Handler
+void __render_text_to_screen(PTY_Payload_List *payload) {
   PTY_Payload_List *curr = payload;
+  Terminal::get_instance()->set_cursor_x(0);
   while (curr != nullptr && curr->next != nullptr) {
     if (curr->curr->type == PAYLOAD_INS) {
       if (handle_escape_sequence(curr->curr->data,
-                                 escape_sequence_handler_callback)) {
+                                 escape_sequence_handler_callback) ==
+          ESC_SCR_CLEAR_SIGNAL) {
         curr = ptyPayload;
         break;
       }
-    }
-
-    else {
-      ImGui::Text("%s", curr->curr->data.c_str());
+    } else {
+      __print_character_to_screen(curr->curr->data.c_str());
     }
     curr = curr->next;
   }
   if (curr != nullptr) {
-    std::string tempString = curr->curr->data + inputBuffer;
-    ImGui::Text("%s", tempString.c_str());
-  } else
-    ImGui::Text("%s", inputBuffer.c_str());
+    __print_character_to_screen(curr->curr->data);
+  }
+  __print_character_to_screen(inputBuffer + CURSOR);
 }
 
 // EscapeSequenceHandler section
 void escape_sequence_handler_callback(int signal) {
-  if (signal == SCR_CLEAR_SIGNAL) {
+  if (signal == ESC_SCR_CLEAR_SIGNAL) {
     ptyPayload = erase_PTY_Payload_List(ptyPayload);
     ptyPayloadTail = ptyPayload;
   }
